@@ -19,7 +19,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: "http://localhost:3001",
     credentials: true,
   })
 );
@@ -31,6 +31,7 @@ app.use("/api/orders", require("./routes/orderRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/payment", require("./routes/paymentRoutes"));
 app.use("/api/cart", require("./routes/cartRoutes"));
+app.use("/api/reviews", require("./routes/reviewRoutes"));
 
 // Root route
 app.get("/", (req, res) => {
@@ -45,7 +46,7 @@ const server = http.createServer(app);
 // 🔥 init socket
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: "http://localhost:3001",
     methods: ["GET", "POST"],
   },
 });

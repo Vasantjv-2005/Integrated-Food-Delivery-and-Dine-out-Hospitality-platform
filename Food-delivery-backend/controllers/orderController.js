@@ -1,9 +1,24 @@
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 
-// 🚀 PLACE ORDER
+// PLACE ORDER
 exports.placeOrder = async (req, res) => {
   try {
+    // Check if items are sent directly from frontend
+    const { items, address, totalPrice } = req.body;
+    
+    // If items are sent directly (from frontend cart)
+    if (items && items.length > 0) {
+      const order = await Order.create({
+        user: req.user.id,
+        items: items,
+        totalPrice: totalPrice || items.reduce((acc, item) => acc + item.price * item.qty, 0),
+        address: address,
+      });
+      return res.json(order);
+    }
+    
+    // Otherwise, try to get from cart (original logic)
     const cart = await Cart.findOne({ user: req.user.id });
 
     if (!cart || cart.items.length === 0) {
@@ -34,7 +49,7 @@ exports.placeOrder = async (req, res) => {
   }
 };
 
-// 📦 GET USER ORDERS
+// GET USER ORDERS
 exports.getOrders = async (req, res) => {
   try {
     const orders = await Order.find({ user: req.user.id });

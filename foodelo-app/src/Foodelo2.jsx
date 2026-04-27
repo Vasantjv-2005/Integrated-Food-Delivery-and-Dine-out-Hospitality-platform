@@ -1,4 +1,5 @@
 import { useState, useEffect, useContext, createContext } from "react";
+import { restaurantAPI, orderAPI, authAPI, authHelpers, cartAPI, reviewAPI } from './api';
 
 const RESTAURANTS = [
   {id:1,name:"Spice Garden",cuisine:"North Indian",emoji:"🍛",rating:4.7,reviews:842,deliveryTime:"25-35",price:"₹₹",tags:["Popular","Spicy"],open:true,description:"Authentic Mughal flavors from the heart of Delhi",veg:false},
@@ -60,18 +61,6 @@ const BADGES=[
 const CartCtx = createContext(null);
 const AppCtx  = createContext(null);
 
-function CartProvider({ children }) {
-  const [items, setItems] = useState([]);
-  const [open, setOpen] = useState(false);
-  const add    = (item) => setItems(p => { const e = p.find(i => i.id === item.id); return e ? p.map(i => i.id === item.id ? {...i, qty: i.qty+1} : i) : [...p, {...item, qty:1}]; });
-  const remove = (id)   => setItems(p => p.filter(i => i.id !== id));
-  const update = (id, qty) => qty <= 0 ? remove(id) : setItems(p => p.map(i => i.id === id ? {...i, qty} : i));
-  const clear  = ()     => setItems([]);
-  const total  = items.reduce((s, i) => s + i.price * i.qty, 0);
-  const count  = items.reduce((s, i) => s + i.qty, 0);
-  return <CartCtx.Provider value={{items,add,remove,update,clear,total,count,open,setOpen}}>{children}</CartCtx.Provider>;
-}
-
 function AppProvider({ children }) {
   const [page,       setPage]       = useState("home");
   const [restaurant, setRestaurant] = useState(null);
@@ -83,6 +72,11 @@ function AppProvider({ children }) {
   const [toasts,     setToasts]     = useState([]);
   const [mood,       setMood]       = useState(null);
   const [weather,    setWeather]    = useState("☀️ Sunny");
+  
+  // Authentication state
+  const [user,       setUser]       = useState(authHelpers.getUser());
+  const [isAuthenticated, setIsAuthenticated] = useState(authHelpers.isAuthenticated());
+  const [authLoading, setAuthLoading] = useState(false);
 
   const toast = (msg, type = "info") => {
     const id = Date.now();
@@ -97,6 +91,87 @@ function AppProvider({ children }) {
     return o;
   };
 
+  // Authentication functions
+  const login = async (email, password) => {
+    setAuthLoading(true);
+    try {
+      const response = await authAPI.login({ email, password });
+      authHelpers.setToken(response.token);
+      // Note: You might want to fetch user profile here
+      setIsAuthenticated(true);
+      setUser({ email }); // Simplified user object
+      toast("Login successful!", "success");
+      return response;
+    } catch (error) {
+      toast(error.message || "Login failed", "error");
+      throw error;
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const register = async (name, email, password) => {
+    setAuthLoading(true);
+    try {
+      const response = await authAPI.register({ name, email, password });
+      authHelpers.setToken(response.token);
+      setIsAuthenticated(true);
+      setUser({ name, email });
+      toast("Registration successful!", "success");
+      return response;
+    } catch (error) {
+      toast(error.message || "Registration failed", "error");
+      throw error;
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const logout = () => {
+    authHelpers.clearAuth();
+    setIsAuthenticated(false);
+    setUser(null);
+    toast("Logged out successfully", "info");
+    setPage("home");
+  };
+
+  // State for real restaurants from backend
+  const [restaurants, setRestaurants] = useState([]);
+  const [restaurantsLoading, setRestaurantsLoading] = useState(false);
+  
+  // Load restaurants from backend on component mount
+  useEffect(() => {
+    loadRestaurants();
+  }, []);
+  
+  const loadRestaurants = async () => {
+    setRestaurantsLoading(true);
+    try {
+      const data = await restaurantAPI.getAll();
+      // Transform backend data to match frontend format
+      const transformedRestaurants = data.map(restaurant => ({
+        id: restaurant._id,
+        name: restaurant.name,
+        cuisine: restaurant.cuisine,
+        emoji: "🍽️", // Default emoji
+        rating: restaurant.rating || 4.5,
+        reviews: Math.floor(Math.random() * 1000), // Random reviews for now
+        deliveryTime: "25-35", // Default delivery time
+        price: "₹₹", // Default price
+        tags: restaurant.isOpen ? ["Popular"] : ["Closed"],
+        open: restaurant.isOpen,
+        description: `Authentic ${restaurant.cuisine} cuisine`,
+        veg: restaurant.menu?.some(item => item.veg) || false,
+        menu: restaurant.menu || []
+      }));
+      setRestaurants(transformedRestaurants);
+    } catch (error) {
+      console.error('Failed to load restaurants:', error);
+      // Keep using hardcoded restaurants as fallback
+    }
+    setRestaurantsLoading(false);
+  };
+
   // Called when user taps a restaurant — fetches menu from backend
   const viewRestaurant = async (r) => {
     setRestaurant(r);
@@ -105,23 +180,114 @@ function AppProvider({ children }) {
     setMenuItems([]);
     setMenuLoading(true);
     try {
-      // 🔌 Replace this URL with your real backend endpoint
-      // Expected response: { items: [ { id, name, emoji, cat, price, veg, popular, desc }, ... ] }
-      const res = await fetch(`https://your-backend.com/api/menu/${r.id}`);
-      const data = await res.json();
-      setMenuItems(data.items || []);
-    } catch {
-      // Backend not connected yet — show empty state
-      setMenuItems([]);
+      // Try to get restaurant details with menu from backend
+      const restaurantData = await restaurantAPI.getById(r.id);
+      
+      // Transform menu items to match frontend format
+      const transformedMenuItems = restaurantData.menu.map((item, index) => {
+        // Better emoji assignment based on item name
+        let emoji = "🍽️"; // default
+        const name = item.name.toLowerCase();
+        
+        if (name.includes("burger") || name.includes("patty")) emoji = "🍔";
+        else if (name.includes("pizza")) emoji = "🍕";
+        else if (name.includes("biryani") || name.includes("rice")) emoji = "🍚";
+        else if (name.includes("noodle") || name.includes("pasta")) emoji = "🍜";
+        else if (name.includes("salad")) emoji = "🥗";
+        else if (name.includes("soup")) emoji = "🍲";
+        else if (name.includes("taco") || name.includes("burrito")) emoji = "🌮";
+        else if (name.includes("sandwich")) emoji = "🥪";
+        else if (name.includes("fries")) emoji = "🍟";
+        else if (name.includes("chicken") || name.includes("meat")) emoji = "🍗";
+        else if (name.includes("fish")) emoji = "🐟";
+        else if (name.includes("egg")) emoji = "🍳";
+        else if (name.includes("cheese")) emoji = "🧀";
+        else if (name.includes("bread") || name.includes("naan") || name.includes("roti")) emoji = "🍞";
+        else if (name.includes("roll") || name.includes("spring")) emoji = "🥟";
+        else if (item.veg) emoji = "🥗";
+        
+        return {
+          id: item._id || index,
+          name: item.name,
+          emoji: emoji,
+          cat: item.category || "Main Course",
+          price: item.price,
+          veg: item.veg || false,
+          popular: item.popular || false,
+          desc: item.description || ""
+        };
+      });
+      
+      setMenuItems(transformedMenuItems);
+    } catch (error) {
+      console.error('Failed to load menu:', error);
+      // If restaurant has menu from the list, use it
+      if (r.menu && r.menu.length > 0) {
+        const transformedMenuItems = r.menu.map((item, index) => {
+          // Better emoji assignment based on item name
+          let emoji = "🍽️"; // default
+          const name = item.name.toLowerCase();
+          
+          if (name.includes("burger") || name.includes("patty")) emoji = "🍔";
+          else if (name.includes("pizza")) emoji = "🍕";
+          else if (name.includes("biryani") || name.includes("rice")) emoji = "🍚";
+          else if (name.includes("noodle") || name.includes("pasta")) emoji = "🍜";
+          else if (name.includes("salad")) emoji = "🥗";
+          else if (name.includes("soup")) emoji = "🍲";
+          else if (name.includes("taco") || name.includes("burrito")) emoji = "🌮";
+          else if (name.includes("sandwich")) emoji = "🥪";
+          else if (name.includes("fries")) emoji = "🍟";
+          else if (name.includes("chicken") || name.includes("meat")) emoji = "🍗";
+          else if (name.includes("fish")) emoji = "🐟";
+          else if (name.includes("egg")) emoji = "🍳";
+          else if (name.includes("cheese")) emoji = "🧀";
+          else if (name.includes("bread") || name.includes("naan") || name.includes("roti")) emoji = "🍞";
+          else if (name.includes("roll") || name.includes("spring")) emoji = "🥟";
+          else if (item.veg) emoji = "🥗";
+          
+          return {
+            id: index,
+            name: item.name,
+            emoji: emoji,
+            cat: "Main Course",
+            price: item.price,
+            veg: item.veg || false,
+            popular: false,
+            desc: item.description || ""
+          };
+        });
+        setMenuItems(transformedMenuItems);
+      } else {
+        setMenuItems([]);
+      }
     }
     setMenuLoading(false);
   };
 
   return (
-    <AppCtx.Provider value={{page,setPage,restaurant,viewRestaurant,menuItems,menuLoading,orders,addOrder,recentlyViewed,points,toast,toasts,mood,setMood,weather,setWeather}}>
+    <AppCtx.Provider value={{
+      page,setPage,restaurant,viewRestaurant,menuItems,menuLoading,orders,addOrder,recentlyViewed,points,toast,toasts,mood,setMood,weather,setWeather,
+      restaurants,restaurantsLoading,loadRestaurants,
+      // Authentication
+      user,isAuthenticated,authLoading,login,register,logout
+    }}>
       {children}
     </AppCtx.Provider>
   );
+}
+
+function CartProvider({ children }) {
+  const [items, setItems] = useState([]);
+  const [open, setOpen] = useState(false);
+  
+  const add    = (item) => setItems(p => { const e = p.find(i => i.id === item.id); return e ? p.map(i => i.id === item.id ? {...i, qty: i.qty+1} : i) : [...p, {...item, qty:1}]; });
+  const remove = (id)   => setItems(p => p.filter(i => i.id !== id));
+  const update = (id, qty) => qty <= 0 ? remove(id) : setItems(p => p.map(i => i.id === id ? {...i, qty} : i));
+  const clear  = ()     => setItems([]);
+  const total  = items.reduce((s, i) => s + i.price * i.qty, 0);
+  const count  = items.reduce((s, i) => s + i.qty, 0);
+  
+  return <CartCtx.Provider value={{items,add,remove,update,clear,total,count,open,setOpen}}>{children}</CartCtx.Provider>;
 }
 
 const useCart = () => useContext(CartCtx);
@@ -171,7 +337,7 @@ function Toasts() {
 
 // ─── Navbar ─────────────────────────────────────────────────────────────────
 function Navbar() {
-  const { page, setPage } = useApp();
+  const { page, setPage, isAuthenticated, logout } = useApp();
   const { count, setOpen } = useCart();
   const tabs = [["home","🏠","Home"],["food","🍔","Food"],["dine","🍽️","Dine"],["events","🎟️","Events"],["orders","📦","Orders"],["smart","🧠","Smart"]];
   const isFood = ["restaurant","checkout","tracking"].includes(page);
@@ -188,9 +354,34 @@ function Navbar() {
           );
         })}
       </div>
-      <button onClick={() => setOpen(true)} style={{...S.btn("ghost"),position:"relative",padding:"7px 12px"}}>
-        🛒 Cart {count > 0 && <span style={{background:"#e8440a",color:"#fff",fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:10}}>{count}</span>}
-      </button>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        {isAuthenticated ? (
+          <>
+            <button 
+              onClick={() => setPage("addRestaurant")} 
+              style={{...S.btn("outline"),padding:"6px 12px",fontSize:11}}
+            >
+              ➕ Add Restaurant
+            </button>
+            <button 
+              onClick={logout} 
+              style={{...S.btn("ghost"),padding:"6px 12px",fontSize:11}}
+            >
+              Logout
+            </button>
+          </>
+        ) : (
+          <button 
+            onClick={() => setPage("auth")} 
+            style={{...S.btn("primary"),padding:"6px 12px",fontSize:11}}
+          >
+            Login / Register
+          </button>
+        )}
+        <button onClick={() => setOpen(true)} style={{...S.btn("ghost"),position:"relative",padding:"7px 12px"}}>
+          🛒 Cart {count > 0 && <span style={{background:"#e8440a",color:"#fff",fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:10}}>{count}</span>}
+        </button>
+      </div>
     </nav>
   );
 }
@@ -270,10 +461,12 @@ function CartDrawer() {
 
 // ─── Pages ─────────────────────────────────────────────────────────────────
 function HomePage() {
-  const { setPage, viewRestaurant, mood, setMood, weather, setWeather, toast } = useApp();
+  const { setPage, viewRestaurant, mood, setMood, weather, setWeather, toast, restaurants, restaurantsLoading } = useApp();
   const [mystery, setMystery] = useState(null);
+  
   const showMystery = () => {
-    const rests = RESTAURANTS.filter(r=>r.open).sort(()=>Math.random()-.5).slice(0,3);
+    const availableRestaurants = restaurants.length > 0 ? restaurants : RESTAURANTS.filter(r=>r.open);
+    const rests = availableRestaurants.sort(()=>Math.random()-.5).slice(0,3);
     const event = EVENTS[Math.floor(Math.random()*EVENTS.length)];
     setMystery({ rests, event });
     toast("✨ Suggestions ready!","success");
@@ -317,7 +510,11 @@ function HomePage() {
           <div style={{background:"#eef5ff",border:"1px solid #c5d9f5",borderRadius:12,padding:14}}>
             <div style={{fontSize:11,color:"#1a5fa8",fontWeight:700,marginBottom:8}}>🧠 Picks for {mood} mood</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {moodData.rests.map(id => { const r=RESTAURANTS.find(x=>x.id===id); return r&&<span key={id} style={{...S.tag("blue"),cursor:"pointer"}} onClick={()=>viewRestaurant(r)}>{r.emoji} {r.name}</span>; })}
+              {moodData.rests.map(id => { 
+                const allRestaurants = restaurants.length > 0 ? restaurants : RESTAURANTS;
+                const r = allRestaurants.find(x=>x.id===id); 
+                return r&&<span key={id} style={{...S.tag("blue"),cursor:"pointer"}} onClick={()=>viewRestaurant(r)}>{r.emoji} {r.name}</span>; 
+              })}
               {moodData.events.map(id => { const e=EVENTS.find(x=>x.id===id); return e&&<span key={id} style={{...S.tag("purple"),cursor:"pointer"}} onClick={()=>setPage("events")}>{e.emoji} {e.name}</span>; })}
             </div>
           </div>
@@ -338,10 +535,16 @@ function HomePage() {
 
       {/* Trending */}
       <div style={{marginBottom:20}}>
-        <div style={S.section}>🔥 Trending Now <span style={{fontSize:12,fontWeight:400,color:"#555"}}>Most ordered today</span></div>
-        <div style={S.grid}>
-          {RESTAURANTS.filter(r=>r.tags.some(t=>["Trending","Bestseller","Popular"].includes(t))).slice(0,6).map(r=><RestCard key={r.id} r={r} onClick={()=>viewRestaurant(r)}/>)}
-        </div>
+        <div style={S.section}>🔥 Trending Now <span style={{fontSize:12,fontWeight:400,color:"#555"}}>{restaurantsLoading ? "Loading..." : "Most ordered today"}</span></div>
+        {restaurantsLoading ? (
+          <div style={{textAlign:"center",padding:"40px 0",color:"#999"}}>
+            <div>Loading restaurants...</div>
+          </div>
+        ) : (
+          <div style={S.grid}>
+            {(restaurants.length > 0 ? restaurants : RESTAURANTS).filter(r=>r.tags.some(t=>["Trending","Bestseller","Popular"].includes(t))).slice(0,6).map(r=><RestCard key={r.id} r={r} onClick={()=>viewRestaurant(r)}/>)}
+          </div>
+        )}
       </div>
 
       {/* Combos */}
@@ -411,7 +614,7 @@ function RestCard({ r, onClick }) {
 }
 
 function FoodPage() {
-  const { viewRestaurant, recentlyViewed } = useApp();
+  const { viewRestaurant, recentlyViewed, restaurants, restaurantsLoading } = useApp();
   const [filter, setFilter]   = useState("All");
   const [sort,   setSort]     = useState("rating");
   const [vegOnly,setVegOnly]  = useState(false);
@@ -419,7 +622,11 @@ function FoodPage() {
   useEffect(() => { setTimeout(() => setLoading(false), 700); }, []);
   const filters = ["All","Indian","Chinese","Italian","Japanese","Healthy","Fast Food","Veg"];
   const cuisineMap = { Indian:["North Indian","South Indian","Hyderabadi","Mughlai"], Chinese:["Chinese","Korean"], Italian:["Italian"], Japanese:["Japanese"], Healthy:["Healthy","Vegan"], "Fast Food":["American","Street Food"] };
-  let list = RESTAURANTS.filter(r => {
+  
+  // Use backend restaurants if available, otherwise fallback to hardcoded
+  const availableRestaurants = restaurants.length > 0 ? restaurants : RESTAURANTS;
+  
+  let list = availableRestaurants.filter(r => {
     if (vegOnly && !r.veg) return false;
     if (filter === "All") return true;
     if (filter === "Veg") return r.veg;
@@ -479,26 +686,145 @@ function FoodPage() {
 }
 
 function RestaurantPage() {
-  const { restaurant: r, setPage, toast, menuItems, menuLoading } = useApp();
+  const { restaurant: r, setPage, toast, menuItems, menuLoading, isAuthenticated, viewRestaurant } = useApp();
   const { add, items } = useCart();
   const [cat, setCat]     = useState("All");
   const [veg, setVeg]     = useState(false);
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState("");
-  const [reviews, setReviews] = useState([
-    {id:1,user:"Priya K.",rating:5,text:"Absolutely loved it! Will definitely order again.",time:"2h ago"},
-    {id:2,user:"Rahul M.",rating:4,text:"Good food, delivery was a bit late but quality made up for it.",time:"1d ago"},
-  ]);
+  const [reviews, setReviews] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  
+  // Menu item addition state
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [newMenuItem, setNewMenuItem] = useState({
+    name: '',
+    price: '',
+    veg: false,
+    description: ''
+  });
+  const [addingMenuItem, setAddingMenuItem] = useState(false);
+
+  // Load reviews from backend when restaurant changes
+  useEffect(() => {
+    if (r && r.id) {
+      loadReviews();
+    }
+  }, [r?.id]);
+
   if (!r) return null;
 
   const cats = ["All", ...[...new Set(menuItems.map(i=>i.cat))]];
   const filtered = menuItems.filter(i => (!veg || i.veg) && (cat==="All" || i.cat===cat));
 
-  const submitReview = () => {
-    if (!reviewText || !rating) { toast("Add rating and review text","error"); return; }
-    setReviews(p=>[{id:Date.now(),user:"You",rating,text:reviewText,time:"Just now"},...p]);
-    setReviewText(""); setRating(0);
-    toast("Review submitted! +10 points 🌟","success");
+  const loadReviews = async () => {
+    setReviewsLoading(true);
+    try {
+      const reviewsData = await reviewAPI.getRestaurantReviews(r.id);
+      // Transform backend reviews to frontend format
+      const transformedReviews = reviewsData.map(review => ({
+        id: review._id,
+        user: review.user?.name || "Anonymous",
+        rating: review.rating,
+        text: review.comment,
+        time: new Date(review.createdAt).toLocaleDateString()
+      }));
+      setReviews(transformedReviews);
+    } catch (error) {
+      console.error('Failed to load reviews:', error);
+      // Fallback to sample reviews
+      setReviews([
+        {id:1,user:"Priya K.",rating:5,text:"Absolutely loved it! Will definitely order again.",time:"2h ago"},
+        {id:2,user:"Rahul M.",rating:4,text:"Good food, delivery was a bit late but quality made up for it.",time:"1d ago"},
+      ]);
+    }
+    setReviewsLoading(false);
+  };
+
+  const submitReview = async () => {
+    if (!reviewText || !rating) { 
+      toast("Add rating and review text","error"); 
+      return; 
+    }
+    
+    if (!isAuthenticated) {
+      toast("Please login to submit a review","error");
+      return;
+    }
+
+    try {
+      await reviewAPI.addReview({
+        restaurant: r.id,
+        rating: rating,
+        comment: reviewText
+      });
+      
+      setReviewText(""); 
+      setRating(0);
+      toast("Review submitted! +10 points 🌟","success");
+      
+      // Reload reviews to show the new one
+      await loadReviews();
+    } catch (error) {
+      console.error('Failed to submit review:', error);
+      toast("Failed to submit review","error");
+    }
+  };
+
+  const handleAddMenuItem = async () => {
+    if (!newMenuItem.name || !newMenuItem.price) {
+      toast('Please fill in menu item name and price', 'error');
+      return;
+    }
+    
+    if (!isAuthenticated) {
+      toast('Please login to add menu items', 'error');
+      return;
+    }
+    
+    if (!r || !r.id) {
+      toast('Restaurant information not available', 'error');
+      return;
+    }
+    
+    setAddingMenuItem(true);
+    try {
+      console.log('Adding menu item to restaurant:', r.id);
+      console.log('Menu item data:', {
+        name: newMenuItem.name,
+        price: parseFloat(newMenuItem.price),
+        veg: newMenuItem.veg,
+        description: newMenuItem.description
+      });
+      
+      await restaurantAPI.addMenuItem(r.id, {
+        name: newMenuItem.name,
+        price: parseFloat(newMenuItem.price),
+        veg: newMenuItem.veg,
+        description: newMenuItem.description
+      });
+      
+      toast('Menu item added successfully!', 'success');
+      
+      // Reset form
+      setNewMenuItem({
+        name: '',
+        price: '',
+        veg: false,
+        description: ''
+      });
+      setShowAddMenu(false);
+      
+      // Refresh restaurant data to show new menu item
+      setTimeout(async () => {
+        await viewRestaurant(r);
+      }, 500);
+    } catch (error) {
+      console.error('Add menu item error:', error);
+      toast(error.message || 'Failed to add menu item', 'error');
+    } finally {
+      setAddingMenuItem(false);
+    }
   };
 
   return (
@@ -551,6 +877,75 @@ function RestaurantPage() {
       )}
 
       <div style={{height:1,background:"#ede8e1",margin:"20px 0"}}/>
+      
+      {/* Add Menu Item Section */}
+      {isAuthenticated && (
+        <div style={{marginBottom:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={S.section}>🍽️ Menu Management</div>
+            <button 
+              onClick={() => setShowAddMenu(!showAddMenu)}
+              style={{...S.btn("outline"),fontSize:12}}
+            >
+              {showAddMenu ? "Cancel" : "➕ Add Menu Item"}
+            </button>
+          </div>
+          
+          {showAddMenu && (
+            <div style={{background:"#ffffff",border:"1px solid #ede8e1",borderRadius:12,padding:16,marginBottom:16}}>
+              <div style={{fontWeight:600,fontSize:14,marginBottom:12}}>Add New Menu Item</div>
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:12,marginBottom:12}}>
+                <input
+                  type="text"
+                  value={newMenuItem.name}
+                  onChange={(e) => setNewMenuItem({...newMenuItem, name: e.target.value})}
+                  style={S.input}
+                  placeholder="Item name"
+                />
+                <input
+                  type="number"
+                  value={newMenuItem.price}
+                  onChange={(e) => setNewMenuItem({...newMenuItem, price: e.target.value})}
+                  style={S.input}
+                  placeholder="Price"
+                />
+              </div>
+              
+              <div style={{marginBottom:12}}>
+                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",marginBottom:8}}>
+                  <input
+                    type="checkbox"
+                    checked={newMenuItem.veg}
+                    onChange={(e) => setNewMenuItem({...newMenuItem, veg: e.target.checked})}
+                    style={{accentColor:"#22c55e"}}
+                  />
+                  🌱 Vegetarian Item
+                </label>
+                
+                <input
+                  type="text"
+                  value={newMenuItem.description}
+                  onChange={(e) => setNewMenuItem({...newMenuItem, description: e.target.value})}
+                  style={S.input}
+                  placeholder="Description (optional)"
+                />
+              </div>
+              
+              <button
+                onClick={handleAddMenuItem}
+                disabled={addingMenuItem}
+                style={{
+                  ...S.btn("primary"),
+                  opacity: addingMenuItem ? 0.7 : 1
+                }}
+              >
+                {addingMenuItem ? 'Adding...' : 'Add Menu Item'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      
       <div style={S.section}>⭐ Reviews</div>
       <div style={{background:"#ffffff",border:"1px solid #ede8e1",borderRadius:12,padding:14,marginBottom:16}}>
         <div style={{fontWeight:600,fontSize:13,marginBottom:8}}>Write a Review</div>
@@ -601,15 +996,52 @@ function MenuItem({ item, add, items, toast }) {
 }
 
 function CheckoutPage() {
-  const { setPage, addOrder, toast, restaurant } = useApp();
+  const { setPage, addOrder, toast, restaurant, isAuthenticated } = useApp();
   const { items, total, clear } = useCart();
   const [addr, setAddr] = useState({name:"Vikram Nair",line:"#42, 6th Cross, Indiranagar",city:"Bengaluru",pin:"560038"});
   const [payment, setPayment] = useState("upi");
   const [placing, setPlacing] = useState(false);
   const delivery = 49; const taxes = Math.round(total*.05); const grand = total+delivery+taxes;
-  const place = () => {
+  
+  const place = async () => {
+    if (!isAuthenticated) {
+      toast("Please login to place order", "error");
+      return;
+    }
+    
+    if (items.length === 0) {
+      toast("Your cart is empty", "error");
+      return;
+    }
+    
     setPlacing(true);
-    setTimeout(()=>{ addOrder({items:[...items],total:grand,restaurant:restaurant?.name||"Foodelo Order",payment,addr}); clear(); setPlacing(false); setPage("tracking"); toast("🎉 Order placed! +50 points","success"); },1500);
+    try {
+      // Call backend API to place order
+      const orderResponse = await orderAPI.placeOrder({
+        items: items,
+        totalPrice: grand,
+        address: `${addr.line}, ${addr.city}, ${addr.pin} - ${addr.name}`,
+      });
+      
+      // Add to local state for immediate UI update
+      addOrder({
+        items: [...items],
+        total: grand,
+        restaurant: restaurant?.name || "Foodelo Order",
+        payment,
+        addr,
+        orderId: orderResponse._id
+      });
+      
+      clear();
+      setPlacing(false);
+      setPage("tracking");
+      toast("🎉 Order placed successfully! +50 points", "success");
+    } catch (error) {
+      console.error('Failed to place order:', error);
+      toast(error.message || "Failed to place order", "error");
+      setPlacing(false);
+    }
   };
   return (
     <div style={{maxWidth:540}}>
@@ -959,6 +1391,368 @@ function SmartPage() {
   );
 }
 
+// ─── Authentication Page ─────────────────────────────────────────────────────
+function AuthPage() {
+  const { login, register, authLoading, toast, setPage } = useApp();
+  const [isLogin, setIsLogin] = useState(true);
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: ''
+  });
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (isLogin) {
+        await login(formData.email, formData.password);
+      } else {
+        await register(formData.name, formData.email, formData.password);
+      }
+      setPage('home');
+    } catch (error) {
+      // Error is already handled in login/register functions
+    }
+  };
+
+  const handleChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  return (
+    <div style={{maxWidth:400,margin:'50px auto',padding:20}}>
+      <div style={{background:'#ffffff',border:'1px solid #ede8e1',borderRadius:18,padding:30,boxShadow:'0 4px 12px rgba(0,0,0,0.1)'}}>
+        <h2 style={{fontWeight:800,fontSize:24,marginBottom:20,textAlign:'center',color:'#1a1a1a'}}>
+          {isLogin ? 'Welcome Back!' : 'Create Account'}
+        </h2>
+        
+        <form onSubmit={handleSubmit}>
+          {!isLogin && (
+            <div style={{marginBottom:16}}>
+              <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Name</label>
+              <input
+                type="text"
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
+                required={!isLogin}
+                style={S.input}
+                placeholder="Your name"
+              />
+            </div>
+          )}
+          
+          <div style={{marginBottom:16}}>
+            <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Email</label>
+            <input
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              required
+              style={S.input}
+              placeholder="your@email.com"
+            />
+          </div>
+          
+          <div style={{marginBottom:20}}>
+            <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Password</label>
+            <input
+              type="password"
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              required
+              style={S.input}
+              placeholder="••••••••"
+            />
+          </div>
+          
+          <button
+            type="submit"
+            disabled={authLoading}
+            style={{
+              ...S.btn('primary'),
+              width: '100%',
+              padding: '12px',
+              fontSize: 14,
+              fontWeight: 700,
+              opacity: authLoading ? 0.7 : 1
+            }}
+          >
+            {authLoading ? 'Please wait...' : (isLogin ? 'Login' : 'Register')}
+          </button>
+        </form>
+        
+        <div style={{textAlign:'center',marginTop:20}}>
+          <button
+            onClick={() => setIsLogin(!isLogin)}
+            style={{background:'transparent',border:'none',color:'#e8440a',cursor:'pointer',fontSize:13,fontWeight:600}}
+          >
+            {isLogin ? "Don't have an account? Register" : "Already have an account? Login"}
+          </button>
+        </div>
+        
+        <div style={{textAlign:'center',marginTop:16}}>
+          <button
+            onClick={() => setPage('home')}
+            style={{background:'transparent',border:'none',color:'#999',cursor:'pointer',fontSize:12}}
+          >
+            ← Back to Home
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Restaurant Page ─────────────────────────────────────────────────────
+function AddRestaurantPage() {
+  const { isAuthenticated, toast, setPage, loadRestaurants } = useApp();
+  const [formData, setFormData] = useState({
+    name: '',
+    cuisine: '',
+    latitude: '',
+    longitude: '',
+    menu: []
+  });
+  const [menuItem, setMenuItem] = useState({
+    name: '',
+    price: '',
+    veg: false,
+    description: ''
+  });
+  const [loading, setLoading] = useState(false);
+
+  if (!isAuthenticated) {
+    return (
+      <div style={{textAlign:'center',padding:'60px 0'}}>
+        <div style={{fontSize:48,marginBottom:16}}>🔒</div>
+        <h3 style={{fontWeight:700,fontSize:18,marginBottom:8}}>Login Required</h3>
+        <p style={{color:'#666',marginBottom:20}}>Please login to add a restaurant</p>
+        <button onClick={() => setPage('auth')} style={S.btn('primary')}>
+          Login / Register
+        </button>
+      </div>
+    );
+  }
+
+  const handleRestaurantSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const restaurantData = {
+        ...formData,
+        latitude: parseFloat(formData.latitude),
+        longitude: parseFloat(formData.longitude)
+      };
+      
+      await restaurantAPI.create(restaurantData);
+      toast('Restaurant added successfully!', 'success');
+      
+      // Reset form
+      setFormData({
+        name: '',
+        cuisine: '',
+        latitude: '',
+        longitude: '',
+        menu: []
+      });
+      
+      // Reload restaurants to show the new one
+      await loadRestaurants();
+      setPage('food');
+    } catch (error) {
+      toast(error.message || 'Failed to add restaurant', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addMenuItem = () => {
+    if (!menuItem.name || !menuItem.price) {
+      toast('Please fill in menu item details', 'error');
+      return;
+    }
+    
+    setFormData({
+      ...formData,
+      menu: [...formData.menu, { ...menuItem, price: parseFloat(menuItem.price) }]
+    });
+    
+    setMenuItem({
+      name: '',
+      price: '',
+      veg: false,
+      description: ''
+    });
+    
+    toast('Menu item added', 'success');
+  };
+
+  const removeMenuItem = (index) => {
+    setFormData({
+      ...formData,
+      menu: formData.menu.filter((_, i) => i !== index)
+    });
+  };
+
+  return (
+    <div style={{maxWidth:600,margin:'30px auto',padding:20}}>
+      <div style={{background:'#ffffff',border:'1px solid #ede8e1',borderRadius:18,padding:30,boxShadow:'0 4px 12px rgba(0,0,0,0.1)'}}>
+        <h2 style={{fontWeight:800,fontSize:24,marginBottom:20,color:'#1a1a1a'}}>Add New Restaurant</h2>
+        
+        <form onSubmit={handleRestaurantSubmit}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+            <div>
+              <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Restaurant Name</label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                required
+                style={S.input}
+                placeholder="Restaurant name"
+              />
+            </div>
+            <div>
+              <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Cuisine Type</label>
+              <input
+                type="text"
+                value={formData.cuisine}
+                onChange={(e) => setFormData({...formData, cuisine: e.target.value})}
+                required
+                style={S.input}
+                placeholder="e.g., Italian, Chinese"
+              />
+            </div>
+          </div>
+          
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
+            <div>
+              <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={formData.latitude}
+                onChange={(e) => setFormData({...formData, latitude: e.target.value})}
+                required
+                style={S.input}
+                placeholder="e.g., 12.9716"
+              />
+            </div>
+            <div>
+              <label style={{display:'block',fontSize:13,fontWeight:600,marginBottom:6,color:'#1a1a1a'}}>Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={formData.longitude}
+                onChange={(e) => setFormData({...formData, longitude: e.target.value})}
+                required
+                style={S.input}
+                placeholder="e.g., 77.5946"
+              />
+            </div>
+          </div>
+          
+          {/* Menu Items Section */}
+          <div style={{marginBottom:20}}>
+            <h3 style={{fontWeight:700,fontSize:16,marginBottom:12,color:'#1a1a1a'}}>Menu Items</h3>
+            
+            <div style={{background:'#f8f5f1',border:'1px solid #ede8e1',borderRadius:12,padding:16,marginBottom:16}}>
+              <div style={{display:'grid',gridTemplateColumns:'2fr 1fr auto',gap:8,marginBottom:12}}>
+                <input
+                  type="text"
+                  value={menuItem.name}
+                  onChange={(e) => setMenuItem({...menuItem, name: e.target.value})}
+                  style={S.input}
+                  placeholder="Item name"
+                />
+                <input
+                  type="number"
+                  value={menuItem.price}
+                  onChange={(e) => setMenuItem({...menuItem, price: e.target.value})}
+                  style={S.input}
+                  placeholder="Price"
+                />
+                <button type="button" onClick={addMenuItem} style={S.btn('primary')}>
+                  Add
+                </button>
+              </div>
+              
+              <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,cursor:'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={menuItem.veg}
+                    onChange={(e) => setMenuItem({...menuItem, veg: e.target.checked})}
+                    style={{accentColor:'#22c55e'}}
+                  />
+                  🌱 Vegetarian
+                </label>
+              </div>
+              
+              <input
+                type="text"
+                value={menuItem.description}
+                onChange={(e) => setMenuItem({...menuItem, description: e.target.value})}
+                style={S.input}
+                placeholder="Description (optional)"
+              />
+            </div>
+            
+            {/* Current Menu Items */}
+            {formData.menu.length > 0 && (
+              <div>
+                <h4 style={{fontWeight:600,fontSize:14,marginBottom:8,color:'#1a1a1a'}}>Current Menu:</h4>
+                {formData.menu.map((item, index) => (
+                  <div key={index} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'#f8f5f1',borderRadius:8,marginBottom:4}}>
+                    <div>
+                      <span style={{fontWeight:600,fontSize:13}}>{item.name}</span>
+                      <span style={{color:'#e8440a',fontSize:12,marginLeft:8}}>₹{item.price}</span>
+                      {item.veg && <span style={{...S.tag('green'),marginLeft:8}}>🌱 Veg</span>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeMenuItem(index)}
+                      style={{background:'#ff4444',color:'#white',border:'none',borderRadius:4,padding:'4px 8px',fontSize:11,cursor:'pointer'}}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          
+          <div style={{display:'flex',gap:12}}>
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                ...S.btn('primary'),
+                opacity: loading ? 0.7 : 1
+              }}
+            >
+              {loading ? 'Adding...' : 'Add Restaurant'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage('food')}
+              style={S.btn('ghost')}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <AppProvider>
@@ -972,7 +1766,19 @@ export default function App() {
 function Main() {
   const { page } = useApp();
   const { count, total, setOpen } = useCart();
-  const pages = { home:<HomePage/>, food:<FoodPage/>, restaurant:<RestaurantPage/>, checkout:<CheckoutPage/>, tracking:<TrackingPage/>, orders:<OrdersPage/>, dine:<DinePage/>, events:<EventsPage/>, smart:<SmartPage/> };
+  const pages = { 
+      home:<HomePage/>, 
+      food:<FoodPage/>, 
+      restaurant:<RestaurantPage/>, 
+      checkout:<CheckoutPage/>, 
+      tracking:<TrackingPage/>, 
+      orders:<OrdersPage/>, 
+      dine:<DinePage/>, 
+      events:<EventsPage/>, 
+      smart:<SmartPage/>,
+      auth:<AuthPage/>,
+      addRestaurant:<AddRestaurantPage/>
+    };
   return (
     <div style={S.app}>
       <Navbar />
