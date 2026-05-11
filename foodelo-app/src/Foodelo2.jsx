@@ -279,15 +279,124 @@ function AppProvider({ children }) {
 function CartProvider({ children }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
+  const { restaurant, isAuthenticated, toast, addOrder, setPage } = useApp();
+
+  // Load cart from backend on mount
+  useEffect(() => {
+    if (isAuthenticated) {
+      cartAPI.getCart().then(cartData => {
+        if (cartData && cartData.items) {
+          setItems(cartData.items);
+        }
+      }).catch(error => {
+        console.error('Failed to load cart:', error);
+      });
+    }
+  }, [isAuthenticated]);
   
-  const add    = (item) => setItems(p => { const e = p.find(i => i.id === item.id); return e ? p.map(i => i.id === item.id ? {...i, qty: i.qty+1} : i) : [...p, {...item, qty:1}]; });
-  const remove = (id)   => setItems(p => p.filter(i => i.id !== id));
-  const update = (id, qty) => qty <= 0 ? remove(id) : setItems(p => p.map(i => i.id === id ? {...i, qty} : i));
-  const clear  = ()     => setItems([]);
+  const add    = async (item) => {
+    try {
+      await cartAPI.addToCart(item);
+      setItems(p => { const e = p.find(i => i.id === item.id); return e ? p.map(i => i.id === item.id ? {...i, qty: i.qty+1} : i) : [...p, {...item, qty:1}]; });
+      toast("Item added to cart! 🛒", "success");
+    } catch (error) {
+      console.error('Add to cart error:', error);
+      toast("Failed to add item to cart", "error");
+    }
+  };
+  
+  const remove = async (id) => {
+    try {
+      await cartAPI.removeFromCart(id);
+      setItems(p => p.filter(i => i.id !== id));
+      toast("Item removed from cart", "info");
+    } catch (error) {
+      console.error('Remove from cart error:', error);
+      toast("Failed to remove item", "error");
+    }
+  };
+  
+  const update = async (id, qty) => {
+    try {
+      if (qty <= 0) {
+        await cartAPI.removeFromCart(id);
+        setItems(p => p.filter(i => i.id !== id));
+      } else {
+        // Update quantity in backend would need additional endpoint
+        setItems(p => p.map(i => i.id === id ? {...i, qty} : i));
+      }
+    } catch (error) {
+      console.error('Update cart error:', error);
+      toast("Failed to update cart", "error");
+    }
+  };
+  
+  const clear  = async () => {
+    try {
+      await cartAPI.clearCart();
+      setItems([]);
+      toast("Cart cleared", "info");
+    } catch (error) {
+      console.error('Clear cart error:', error);
+      toast("Failed to clear cart", "error");
+    }
+  };
   const total  = items.reduce((s, i) => s + i.price * i.qty, 0);
   const count  = items.reduce((s, i) => s + i.qty, 0);
   
-  return <CartCtx.Provider value={{items,add,remove,update,clear,total,count,open,setOpen}}>{children}</CartCtx.Provider>;
+  const handleProceedToCheckout = async () => {
+    if (!isAuthenticated) {
+      toast("Please login to proceed", "error");
+      return;
+    }
+    
+    if (items.length === 0) {
+      toast("Your cart is empty", "error");
+      return;
+    }
+    
+    // Show mock payment popup
+    const shouldProceed = window.confirm(`Proceed to pay ₹${total} for your order?\n\nItems: ${items.map(i => i.name).join(", ")}\n\nThis is a demo payment flow.`);
+    
+    if (shouldProceed) {
+      try {
+        // Mock payment successful - place order directly
+        const orderResponse = await fetch('http://localhost:5001/api/orders', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          },
+          body: JSON.stringify({
+            items: items,
+            totalPrice: total,
+            address: "Customer Address - Demo Mode",
+            paymentMethod: "online"
+          })
+        });
+        
+        const order = await orderResponse.json();
+        
+        addOrder({
+          items: [...items],
+          total: total,
+          restaurant: restaurant?.name || "Foodelo Order",
+          payment: "online",
+          orderId: order._id
+        });
+        
+        clear();
+        setOpen(false);
+        setPage("tracking");
+        toast("🎉 Payment successful! Order placed! +50 points", "success");
+      } catch (error) {
+        console.error('Order placement error:', error);
+        toast("Failed to place order", "error");
+      }
+    }
+  };
+  
+  return <CartCtx.Provider value={{items,add,remove,update,clear,total,count,open,setOpen,handleProceedToCheckout}}>{children}</CartCtx.Provider>;
 }
 
 const useCart = () => useContext(CartCtx);
@@ -388,7 +497,7 @@ function Navbar() {
 
 // ─── Cart ──────────────────────────────────────────────────────────────────
 function CartDrawer() {
-  const { items, update, remove, total, open, setOpen } = useCart();
+  const { items, update, remove, total, open, setOpen, handleProceedToCheckout } = useCart();
   const { toast, setPage } = useApp();
   const [coupon, setCoupon] = useState("");
   const [discount, setDiscount] = useState(0);
@@ -449,7 +558,7 @@ function CartDrawer() {
         </div>
         {items.length > 0 && (
           <div style={{padding:14,borderTop:"1px solid #ede8e1"}}>
-            <button style={{...S.btn("primary"),width:"100%",justifyContent:"center",padding:"11px"}} onClick={() => { setOpen(false); setPage("checkout"); }}>
+            <button style={{...S.btn("primary"),width:"100%",justifyContent:"center",padding:"11px"}} onClick={handleProceedToCheckout}>
               Proceed to Checkout → ₹{grand}
             </button>
           </div>
@@ -1016,14 +1125,14 @@ function CheckoutPage() {
     
     setPlacing(true);
     try {
-      // Call backend API to place order
+      // Place order directly for all payment methods for now
       const orderResponse = await orderAPI.placeOrder({
         items: items,
         totalPrice: grand,
         address: `${addr.line}, ${addr.city}, ${addr.pin} - ${addr.name}`,
+        paymentMethod: payment,
       });
       
-      // Add to local state for immediate UI update
       addOrder({
         items: [...items],
         total: grand,
@@ -1036,7 +1145,12 @@ function CheckoutPage() {
       clear();
       setPlacing(false);
       setPage("tracking");
-      toast("🎉 Order placed successfully! +50 points", "success");
+      
+      if (payment === "cod") {
+        toast("🎉 Order placed successfully! +50 points", "success");
+      } else {
+        toast("🎉 Order placed! Payment will be collected on delivery. +50 points", "success");
+      }
     } catch (error) {
       console.error('Failed to place order:', error);
       toast(error.message || "Failed to place order", "error");

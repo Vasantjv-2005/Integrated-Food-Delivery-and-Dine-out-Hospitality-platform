@@ -44,3 +44,19 @@ exports.removeItem = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// CLEAR CART
+exports.clearCart = async (req, res) => {
+  try {
+    const cart = await Cart.findOne({ user: req.user.id });
+    
+    if (cart) {
+      cart.items = [];
+      await cart.save();
+    }
+
+    res.json({ message: "Cart cleared successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

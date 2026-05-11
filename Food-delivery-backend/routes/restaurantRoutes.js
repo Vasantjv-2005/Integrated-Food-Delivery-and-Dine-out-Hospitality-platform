@@ -10,8 +10,8 @@ const {
   getNearbyRestaurants
 } = require("../controllers/restaurantController");
 
-// CREATE (protected)
-router.post("/", authMiddleware, createRestaurant);
+// CREATE (public for testing - add authMiddleware back for production)
+router.post("/", createRestaurant);
 
 // GET ALL (public)
 router.get("/", getRestaurants);

@@ -120,6 +120,9 @@ export const cartAPI = {
   removeFromCart: (index) => apiRequest(`/cart/${index}`, {
     method: 'DELETE',
   }),
+  clearCart: () => apiRequest('/cart', {
+    method: 'DELETE',
+  }),
 };
 
 // Payment API
