@@ -23,7 +23,7 @@ const RESTAURANTS = [
 ];
 
 // MENU is empty — items will come from your backend
-const MENU = {};
+// const MENU = {};
 
 const EVENTS=[
   {id:1,name:"Jazz Night at Leela",emoji:"🎷",cat:"Music",date:"Apr 26",time:"7:00 PM",price:799,venue:"The Leela Palace",tags:["Live Music","Premium"]},
@@ -499,7 +499,7 @@ function Navbar() {
 // ─── Cart ──────────────────────────────────────────────────────────────────
 function CartDrawer() {
   const { items, update, remove, total, open, setOpen, handleProceedToCheckout } = useCart();
-  const { toast, setPage } = useApp();
+  const { toast } = useApp();
   const [coupon, setCoupon] = useState("");
   const [discount, setDiscount] = useState(0);
   const [applied, setApplied] = useState(false);
@@ -724,7 +724,7 @@ function RestCard({ r, onClick }) {
 }
 
 function FoodPage() {
-  const { viewRestaurant, recentlyViewed, restaurants, restaurantsLoading } = useApp();
+  const { viewRestaurant, recentlyViewed, restaurants } = useApp();
   const [filter, setFilter]   = useState("All");
   const [sort,   setSort]     = useState("rating");
   const [vegOnly,setVegOnly]  = useState(false);
@@ -803,7 +803,7 @@ function RestaurantPage() {
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState("");
   const [reviews, setReviews] = useState([]);
-  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [, setReviewsLoading] = useState(false);
   
   // Menu item addition state
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -816,6 +816,7 @@ function RestaurantPage() {
   const [addingMenuItem, setAddingMenuItem] = useState(false);
 
   // Load reviews from backend when restaurant changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (r && r.id) {
       loadReviews();
@@ -1508,7 +1509,7 @@ function SmartPage() {
 
 // ─── Authentication Page ─────────────────────────────────────────────────────
 function AuthPage() {
-  const { login, register, authLoading, toast, setPage } = useApp();
+  const { login, register, authLoading, setPage } = useApp();
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
     name: '',
