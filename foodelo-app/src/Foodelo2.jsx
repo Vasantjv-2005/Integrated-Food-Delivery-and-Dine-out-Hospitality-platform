@@ -361,7 +361,8 @@ function CartProvider({ children }) {
     if (shouldProceed) {
       try {
         // Mock payment successful - place order directly
-        const orderResponse = await fetch('http://localhost:5001/api/orders', {
+        const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+        const orderResponse = await fetch(`${API_URL}/orders`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -1,5 +1,5 @@
 // API Configuration for Food Delivery App
-const API_BASE_URL = 'http://localhost:5001/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
 
 // Generic API request function
 const apiRequest = async (endpoint, options = {}) => {
