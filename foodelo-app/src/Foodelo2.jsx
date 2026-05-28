@@ -815,20 +815,8 @@ function RestaurantPage() {
   });
   const [addingMenuItem, setAddingMenuItem] = useState(false);
 
-  // Load reviews from backend when restaurant changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (r && r.id) {
-      loadReviews();
-    }
-  }, [r?.id]);
-
-  if (!r) return null;
-
-  const cats = ["All", ...[...new Set(menuItems.map(i=>i.cat))]];
-  const filtered = menuItems.filter(i => (!veg || i.veg) && (cat==="All" || i.cat===cat));
-
   const loadReviews = async () => {
+    if (!r?.id) return;
     setReviewsLoading(true);
     try {
       const reviewsData = await reviewAPI.getRestaurantReviews(r.id);
@@ -848,9 +836,23 @@ function RestaurantPage() {
         {id:1,user:"Priya K.",rating:5,text:"Absolutely loved it! Will definitely order again.",time:"2h ago"},
         {id:2,user:"Rahul M.",rating:4,text:"Good food, delivery was a bit late but quality made up for it.",time:"1d ago"},
       ]);
+    } finally {
+      setReviewsLoading(false);
     }
-    setReviewsLoading(false);
   };
+
+  // Load reviews from backend when restaurant changes
+  useEffect(() => {
+    if (r?.id) {
+      loadReviews();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [r?.id]);
+
+  if (!r) return null;
+
+  const cats = ["All", ...[...new Set(menuItems.map(i=>i.cat))]];
+  const filtered = menuItems.filter(i => (!veg || i.veg) && (cat==="All" || i.cat===cat));
 
   const submitReview = async () => {
     if (!reviewText || !rating) { 
